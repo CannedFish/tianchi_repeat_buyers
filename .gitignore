@@ -1,0 +1,7 @@
+*.un~
+*.pyc
+*.swp
+
+data/*
+out/*
+users/*
