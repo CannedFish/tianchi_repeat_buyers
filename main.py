@@ -1,40 +1,9 @@
+# -*- coding: utf8 -*-
+
 import pandas as pd
 import numpy as np
 
-import json
 from graph_db import db
-
-"""
-USER = {
-    '@id': '',
-    '@type': 'User',
-    'age_range': '',
-    'gender': '',
-    'merchants': {
-}
-"""
-
-CHUNKSIZE = 10 ** 4
-
-def save_users(users):
-    pass
-
-def get_user(user_id):
-    """
-    user = {
-        'user_id': '',
-        'age_range': '',
-        'gender': '',
-        'merchants': {
-            '$id': {
-                'label': '',
-                'activity_log': []
-            },
-            ...
-        },
-    }
-    """
-    pass
 
 def create_user_nodes():
     for df in pd.read_csv("./data/data_format1/user_info_format1.csv"
@@ -51,10 +20,40 @@ def create_user_nodes():
     print "Create user nodes finished."
 
 def create_merchant_nodes():
-    pass
+    merchants = []
+    for df in pd.read_csv("./data/data_format1/user_log_format1.csv"
+            , chunksize=CHUNKSIZE
+            , dtype={
+                'user_id': str,
+                'item_id': str,
+                'cat_id': str,
+                'merchant_id': str,
+                'brand_id': str,
+                'time_stamp': str,
+                'action_tpye': np.int32
+            }):
+        merchants.extend(pd.unique(df['merchant_id']).tolist())
+        merchants = list(set(merchants))
+        print "%d element handled, %d merchants total now." % (df.size, len(merchants))
+    nodes = [{
+        'label': 'Merchant',
+        'prop': {
+            'merchant_id': merchant
+        }} for merchant in merchants]
+    db.create_nodes(nodes)
 
-def create_activity_nodes():
-    pass
+def create_activity_nodes(df):
+    nodes = [{
+        'label': 'Activity',
+        'prop': {
+            'activity_id': row['activity_id'],
+            'item_id': row['item_id'],
+            'cat_id': row['cat_id'],
+            'brand_id': row['brand_id'],
+            'time_stamp': row['time_stamp'],
+            'action_tpye': row['action_type']
+        }} for idx, row in df.iterrows()]
+    db.create_nodes(nodes)
 
 def create_relationships():
     for df in pd.read_csv("./data/data_format1/user_log_format1.csv"
@@ -68,15 +67,25 @@ def create_relationships():
                 'time_stamp': str,
                 'action_tpye': np.int32
             }):
-        for idx, row in df.iterrows():
-            # TODO:
-            # 1. extract merchant node info
-            # 2. extract activity node info
-            # 3. format :DO and :TO relations
-            pass
+        # 1. extract activity node info
+        # 2. format :DO and :TO relations
+        df = df.fillna('null')
+        df['activity_id'] = df['user_id'] + df['item_id'] + df['cat_id'] + \
+                df['merchant_id'] + df['brand_id'] + df['time_stamp'] + \
+                df['action_type'].astype(str)
+        create_activity_nodes(df)
+        
+        # for idx, row in df.iterrows():
+            # db.create_edge(('user_id', row['user_id'])
+                    # , ('activity_id', row['activity_id'])
+                    # , 'DO')
+            # db.create_edge(('activity_id', row['activity_id'])
+                    # , ('merchant_id', row['merchant_id'])
+                    # , 'TO')
 
 def main():
     # create_user_nodes()
+    # create_merchant_nodes()
     create_relationships()
 
 if __name__ == '__main__':

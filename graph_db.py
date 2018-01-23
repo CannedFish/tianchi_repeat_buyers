@@ -1,3 +1,5 @@
+# -*- coding: utf8 -*-
+
 from neo4j.v1 import GraphDatabase
 
 import json
