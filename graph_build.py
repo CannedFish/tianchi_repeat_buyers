@@ -5,6 +5,8 @@ import numpy as np
 
 from graph_db import db
 
+CHUNKSIZE = 10 ** 3
+
 def create_user_nodes():
     for df in pd.read_csv("./data/data_format1/user_info_format1.csv"
             , chunksize=CHUNKSIZE):
@@ -54,8 +56,10 @@ def create_activity_nodes(df):
             'action_tpye': row['action_type']
         }} for idx, row in df.iterrows()]
     db.create_nodes(nodes)
+    return len(nodes)
 
 def create_relationships():
+    nodes_num = 0
     for df in pd.read_csv("./data/data_format1/user_log_format1.csv"
             , chunksize=CHUNKSIZE
             , dtype={
@@ -69,11 +73,13 @@ def create_relationships():
             }):
         # 1. extract activity node info
         # 2. format :DO and :TO relations
+        print "Start building activity nodes batch."
         df = df.fillna('null')
         df['activity_id'] = df['user_id'] + df['item_id'] + df['cat_id'] + \
                 df['merchant_id'] + df['brand_id'] + df['time_stamp'] + \
                 df['action_type'].astype(str)
-        create_activity_nodes(df)
+        nodes_num += create_activity_nodes(df)
+        print "%d activity nodes are built." % nodes_num
         
         # for idx, row in df.iterrows():
             # db.create_edge(('user_id', row['user_id'])
