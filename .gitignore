@@ -1,3 +1,7 @@
-Data/*
+data/*
+out/*
+inter/*
+
 *.swp
 *.pyc
+*.un~
