@@ -108,8 +108,7 @@ def generate_train_test():
     
     print "Finish split data into train and test set..."
 
-def generate_features_directly():
-    conn = sqlite3.connect('./inter/features.db')
+def generate_features_directly(conn):
     cur = conn.cursor()
     print "Start create temp feature table..."
     cur.execute("""CREATE TABLE IF NOT EXISTS FEATURES_1_TEMP 
@@ -183,6 +182,76 @@ def generate_features_directly():
             # , 'action_3']).to_csv('./inter/inter_features1.csv'
                     # , mode='a', header=False, index=False)
 
+def construct_training_data_d(conn):
+    """
+    Based on sqlite3
+    """
+    def __insert_data(X, y):
+        print "Start insert data..."
+        X_train, X_test, y_train, y_test = train_test_split(X, y)
+
+        __insert_feature_file(X_train, './inter/feature_train_db.csv')
+        __insert_feature_file(X_test, './inter/feature_test_db.csv')
+        __insert_label_file(y_train, './inter/label_train_db.csv')
+        __insert_label_file(y_test, './inter/label_test_db.csv')
+        print "Finish insert data, with %d records." % len(X)
+        
+    __generate_feature_file_header('./inter/feature_train_db.csv')
+    __generate_feature_file_header('./inter/feature_test_db.csv')
+    __generate_label_file_header('./inter/label_train_db.csv')
+    __generate_label_file_header('./inter/label_test_db.csv')
+    cur = conn.cursor()
+    rec_num = 0
+    X, y = [], []
+    print "Start construct training & test data set based on sqlite3..."
+    for row in cur.execute("""SELECT a.user_id, a.merchant_id, a.action_0, a.action_1, 
+            a.action_2, a.action_3, b.label FROM FEATURES_1 a, TRAINING b 
+            WHERE a.user_id = b.user_id and a.merchant_id = b.merchant_id"""):
+        X.append(row[:6])
+        y.append(row[6:])
+        rec_num += 1
+
+        if rec_num == CHUNKSIZE:
+            __insert_data(X, y)
+            
+            rec_num = 0
+            X, y = [], []
+    
+    if rec_num != 0:
+        __insert_data(X, y)
+    
+    print "Finish construct training & test data set"
+
+def construct_test_data_d(conn):
+    """
+    Based on sqlite3
+    """
+    __generate_feature_file_header('./inter/feature_predict_db.csv')
+    cur = conn.cursor()
+    rec_num = 0
+    X = []
+    print "Start construct test data set for prediction based on sqlite3..."
+    for row in cur.execute("""SELECT a.user_id, a.merchant_id, a.action_0, a.action_1, 
+            a.action_2, a.action_3 FROM FEATURES_1 a, TEST b 
+            WHERE a.user_id = b.user_id and a.merchant_id = b.merchant_id"""):
+        X.append(row)
+        rec_num += 1
+
+        if rec_num == CHUNKSIZE:
+            print "Start insert data..."
+            __insert_feature_file(X, './inter/feature_predict_db.csv')
+            print "Finish insert data, with %d records." % len(X)
+
+            rec_num = 0
+            X = []
+ 
+    if rec_num != 0:
+        print "Start insert data..."
+        __insert_feature_file(X, './inter/feature_predict_db.csv')
+        print "Finish insert data, with %d records." % len(X)
+    
+    print "Finish construct test data set"
+
 def main():
     pass
 
@@ -191,7 +260,11 @@ if __name__ == '__main__':
 
     if sys.argv[1] == 'd':
         print "genarate features directly"
-        generate_features_directly()
+        conn = sqlite3.connect('./inter/features.db')
+        generate_features_directly(conn)
+        construct_training_data_d(conn)
+        construct_test_data_d(conn)
+        conn.close()
     else:
         print "genarate features"
         generate_features()

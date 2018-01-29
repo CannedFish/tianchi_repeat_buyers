@@ -26,6 +26,11 @@ def build_tables(conn):
             (user_id TEXT,
             merchant_id TEXT,
             label INT);""")
+    # TEST
+    cur.execute("""CREATE TABLE IF NOT EXISTS TEST 
+            (user_id TEXT,
+            merchant_id TEXT,
+            prob FLOAT);""")
     # FEATURES_1
     cur.execute("""CREATE TABLE IF NOT EXISTS FEATURES_1 
             (user_id TEXT,
@@ -80,6 +85,16 @@ def import_data(conn):
         cur.executemany("INSERT INTO TRAINING VALUES (?,?,?)", params)
         conn.commit()
         print "%d training data imported." % (df.size/3)
+
+    # test
+    for df in pd.read_csv("./data/data_format1/test_format1.csv"
+            , chunksize=CHUNKSIZE):
+        df = df.fillna(-1).astype({'user_id': str, 'merchant_id': str, 'prob': np.float})
+        params = [(row['user_id'], row['merchant_id'], row['prob']) for idx, row in df.iterrows()]
+        cur = conn.cursor()
+        cur.executemany("INSERT INTO TEST VALUES (?,?,?)", params)
+        conn.commit()
+        print "%d test data imported." % (df.size/3)
     print "Finish import data..."
 
 def exam(conn):
