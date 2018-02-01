@@ -5,3 +5,4 @@ inter/*
 *.swp
 *.pyc
 *.un~
+*.log
