@@ -9,6 +9,7 @@ CHUNKSIZE = 10 ** 5
 MONTH = ['%02d' % x for x in xrange(5, 12)]
 KEYs = ['user_id', 'item_id', 'cat_id', 'merchant_id', 'brand_id']
 
+# Action count
 def action_count(monthly=True):
     def __insert_data(_data_cache, _cols, __dtype):
         df = pd.DataFrame(_data_cache, columns=_cols)
@@ -46,8 +47,8 @@ def action_count(monthly=True):
         data_cache = []
         _header = cols[:5] if monthly else cols[:4]
         if monthly:
-            sql = """SELECT %s, time_stamp, sum(action_0), sum(action_2), sum(action_3) 
-                FROM USERLOG GROUP BY %s, time_stamp""" % (key, key)
+            sql = """SELECT %s, month, sum(action_0), sum(action_2), sum(action_3) 
+                FROM USERLOG GROUP BY %s, month""" % (key, key)
         else:
             sql = """SELECT %s, sum(action_0), sum(action_2), sum(action_3) 
                 FROM USERLOG GROUP BY %s""" % (key, key)
@@ -67,6 +68,26 @@ def action_count(monthly=True):
             __insert_data(data_cache, _header, _dtype)
 
         print "Totally completed with %s" % key
+
+# Day counts
+def day_count(monthly=True):
+    conn = sqlite3.connect("./inter/features.db")
+    p = "./inter/v3/user_monthly_day_count.csv" if monthly \
+            else "./inter/v3/user_overall_day_count.csv"
+    features = ['user_id', 'month'] if monthly else ['user_id']
+    features.extend(['action_0', 'action_2', 'action_3'])
+    pd.DataFrame(columns=features).to_csv(p, index=False)
+
+    print "Making aggragation..."
+    batch = 0
+    rec_num = 0
+    data_cache = []
+    inner_sql = "SELECT user_id, month, action_type, count(distinct(time_stamp)) \
+            FROM USERLOG GROUP BY user_id, month, action_type" if monthly \
+            else "SELECT user_id, action_type, count(distinct(time_stamp)) \
+            FROM USERLOG GROUP BY user_id, action_type"
+    for rec in conn.execute(sql):
+        data_cache.append(rec)
 
 def basic_data_transform():
     """
@@ -88,11 +109,11 @@ def basic_data_transform():
                 'time_stamp': str, 
                 'action_type': np.int32}):
         # Map month to number
-        df['time_stamp'] = df['time_stamp'].apply(lambda x: MONTH.index(x[:2]))
+        df['month'] = df['time_stamp'].apply(lambda x: MONTH.index(x[:2]))
         df.apply(__monthly_record, axis=1, args=(df,))
         df = df.fillna(0)
         df['action_0'] += df['action_1']
-        df.drop(['action_type', 'action_1'], axis=1)\
+        df.drop(['action_1'], axis=1)\
                 .to_sql('USERLOG', conn, index=False, if_exists='append')
         print "Batch %d completed" % batch
         batch += 1
@@ -117,8 +138,8 @@ def basic_data_transform():
         # print "Generate monthly count with %s completed." % key
 
 def main():
-    # basic_data_transform()
-    action_count(False)
+    basic_data_transform()
+    # action_count(False)
 
 if __name__ == '__main__':
     main()
