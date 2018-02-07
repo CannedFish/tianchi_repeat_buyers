@@ -11,6 +11,9 @@ KEYs = ['user_id', 'item_id', 'cat_id', 'merchant_id', 'brand_id']
 
 # Action count
 def action_count(monthly=True):
+    """
+    Overall and monthly day count and ratio for user, item, brand, category, merchant
+    """
     def __insert_data(_data_cache, _cols, __dtype):
         df = pd.DataFrame(_data_cache, columns=_cols)
         df.astype(__dtype)
@@ -71,23 +74,118 @@ def action_count(monthly=True):
 
 # Day counts
 def day_count(monthly=True):
-    conn = sqlite3.connect("./inter/features.db")
-    p = "./inter/v3/user_monthly_day_count.csv" if monthly \
-            else "./inter/v3/user_overall_day_count.csv"
-    features = ['user_id', 'month'] if monthly else ['user_id']
-    features.extend(['action_0', 'action_2', 'action_3'])
-    pd.DataFrame(columns=features).to_csv(p, index=False)
+    """
+    Overall and monthly day count for user, item, brand, category, merchant
+    """
+    def __insert_data(_data_cache, _cols):
+        pd.DataFrame(_data_cache, columns=_cols).to_csv(p, index=False, header=False, mode='a')
+        print "Inserted %d records" % len(_data_cache)
 
+    conn = sqlite3.connect("./inter/features.db")
+    for key in KEYs:
+        print "\nStart handle %s's %s day count" % (key, 'monthly' if monthly else 'overall')
+        p = "./inter/v3/%s_monthly_day.csv" % key if monthly \
+                else "./inter/v3/%s_overall_day.csv" % key
+        features = [key, 'month'] if monthly else [key]
+        features.extend(['action_type', 'day_count'])
+        pd.DataFrame(columns=features).to_csv(p, index=False)
+
+        print "Making aggragation..."
+        batch = 0
+        rec_num = 0
+        data_cache = []
+        sql = "SELECT %s, month, action_type, count(distinct(time_stamp)) \
+                FROM USERLOG GROUP BY %s, month, action_type" % (key, key) if monthly \
+                else "SELECT %s, action_type, count(distinct(time_stamp)) \
+                FROM USERLOG GROUP BY %s, action_type" % (key, key)
+        for rec in conn.execute(sql):
+            data_cache.append(rec)
+            rec_num += 1
+
+            if rec_num == CHUNKSIZE:
+                print "Batch %d" % batch
+                __insert_data(data_cache, features)
+                
+                rec_num = 0
+                data_cache = []
+                batch += 1
+
+        if rec_num > 0:
+            print "Batch %d" % batch
+            __insert_data(data_cache, features)
+
+        print "Totally completed with %s" % key
+
+def __insert_action_data(_data_cache, _to, _cols, _dtype):
+    df = pd.DataFrame(_data_cache, columns=_cols)
+    df.astype(_dtype)
+    df['total_action'] = df['action_0'] + df['action_2'] + df['action_3']
+    df['action_0_ratio'] = df['action_0'] / df['total_action']
+    df['action_2_ratio'] = df['action_2'] / df['total_action']
+    df['action_3_ratio'] = df['action_3'] / df['total_action']
+    df.drop(['total_action'], axis=1).to_csv(_to, index=False, header=False, mode='a')
+    print "Inserted %d records" % len(_data_cache)
+
+def __insert_day_data(_data_cache, _to, _cols, _dt):
+    pd.DataFrame(_data_cache, columns=_cols).to_csv(_to, index=False, header=False, mode='a')
+    print "Inserted %d records" % len(_data_cache)
+
+def __sql(conn, sql, to, batchsize, batch_handler, *args):
     print "Making aggragation..."
     batch = 0
     rec_num = 0
     data_cache = []
-    inner_sql = "SELECT user_id, month, action_type, count(distinct(time_stamp)) \
-            FROM USERLOG GROUP BY user_id, month, action_type" if monthly \
-            else "SELECT user_id, action_type, count(distinct(time_stamp)) \
-            FROM USERLOG GROUP BY user_id, action_type"
     for rec in conn.execute(sql):
         data_cache.append(rec)
+        rec_num += 1
+
+        if rec_num == batchsize:
+            print "Batch %d" % batch
+            batch_handler(data_cache, to, *args)
+
+            rec_num = 0
+            data_cache = []
+            batch += 1
+
+    if rec_num > 0:
+        print "Batch %d" % batch
+        batch_handler(data_cache, to, *args)
+
+# Pair counts
+def pair_count():
+    """
+    Overall action count and day count for user-merchant, user-brand, user-category, 
+    merchant-brand and merchant-category
+    """
+    count_type = [('action',
+        'SELECT %s, %s, sum(action_0), sum(action_2), sum(action_3) FROM USERLOG GROUP BY %s, %s',
+        ['action_0', 'action_2', 'action_3', 'action_0_ratio', 'action_2_ratio', 'action_3_ratio'],
+        {'action_0': np.int32, 'action_2': np.int32, 'action_3': np.int32},
+        __insert_action_data),
+            ('day',
+        'SELECT %s, %s, action_type, count(distinct(time_stamp)) FROM USERLOG GROUP BY %s, %s, action_type',
+        ['action_type', 'day_count'],
+        {},
+        __insert_day_data)]
+    pairs = [('user_id', 'merchant_id'),
+            ('user_id', 'brand_id'),
+            ('user_id', 'cat_id'),
+            ('merchant_id', 'brand_id'),
+            ('merchant_id', 'cat_id')]
+    # srcfmt = './inter/v3/count/%s/%s_overall_%s.csv'
+    targetfmt = './inter/v3/count/%s/%s_%s_overall_%s.csv'
+    conn = sqlite3.connect('./inter/features.db')
+
+    for pair in pairs:
+        for ct, sqlfmt, cf, dt, handler in count_type:
+            print "\nStart handle %s-%s pair's %s count" % (pair[0], pair[1], ct)
+            features = list(pair)
+            features.extend(cf)
+            p = targetfmt % (ct, pair[0], pair[1], ct)
+            pd.DataFrame(columns=features).to_csv(p, index=False)
+            __sql(conn, sqlfmt % (pair[0], pair[1], pair[0], pair[1]), p,
+                    CHUNKSIZE, handler, features, dt)
+            print "Totally completed with %s_%s pair" % pair
 
 def basic_data_transform():
     """
@@ -138,8 +236,10 @@ def basic_data_transform():
         # print "Generate monthly count with %s completed." % key
 
 def main():
-    basic_data_transform()
+    # basic_data_transform()
     # action_count(False)
+    # map(day_count, [True, False])
+    pair_count()
 
 if __name__ == '__main__':
     main()
