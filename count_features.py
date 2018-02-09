@@ -117,7 +117,7 @@ def day_count(monthly=True):
         print "Totally completed with %s" % key
 
 def __insert_action_data(_data_cache, _to, _cols, _dtype):
-    df = pd.DataFrame(_data_cache, columns=_cols)
+    df = pd.DataFrame(_data_cache, columns=_cols[:-3])
     df.astype(_dtype)
     df['total_action'] = df['action_0'] + df['action_2'] + df['action_3']
     df['action_0_ratio'] = df['action_0'] / df['total_action']
@@ -151,33 +151,43 @@ def __sql(conn, sql, to, batchsize, batch_handler, *args):
         print "Batch %d" % batch
         batch_handler(data_cache, to, *args)
 
+PAIRs = [
+    ('user_id', 'merchant_id'),
+    ('user_id', 'brand_id'),
+    ('user_id', 'cat_id'),
+    ('merchant_id', 'brand_id'),
+    ('merchant_id', 'cat_id')
+]
+
 # Pair counts
 def pair_count():
     """
     Overall action count and day count for user-merchant, user-brand, user-category, 
     merchant-brand and merchant-category
     """
-    count_type = [('action',
-        'SELECT %s, %s, sum(action_0), sum(action_2), sum(action_3) FROM USERLOG GROUP BY %s, %s',
-        ['action_0', 'action_2', 'action_3', 'action_0_ratio', 'action_2_ratio', 'action_3_ratio'],
-        {'action_0': np.int32, 'action_2': np.int32, 'action_3': np.int32},
-        __insert_action_data),
-            ('day',
-        'SELECT %s, %s, action_type, count(distinct(time_stamp)) FROM USERLOG GROUP BY %s, %s, action_type',
-        ['action_type', 'day_count'],
-        {},
-        __insert_day_data)]
-    pairs = [('user_id', 'merchant_id'),
-            ('user_id', 'brand_id'),
-            ('user_id', 'cat_id'),
-            ('merchant_id', 'brand_id'),
-            ('merchant_id', 'cat_id')]
-    # srcfmt = './inter/v3/count/%s/%s_overall_%s.csv'
-    targetfmt = './inter/v3/count/%s/%s_%s_overall_%s.csv'
+    print "Pair conut"
+    count_type = [
+        (
+            'action',
+            'SELECT %s, %s, sum(action_0), sum(action_2), sum(action_3) FROM USERLOG GROUP BY %s, %s',
+            ['action_0', 'action_2', 'action_3', 'action_0_ratio', 'action_2_ratio', 'action_3_ratio'],
+            {'action_0': np.int32, 'action_2': np.int32, 'action_3': np.int32},
+            __insert_action_data,
+            './inter/v3/count/%s/%s_%s_overall_%s.csv'
+        ),
+        # (
+            # 'day',
+            # 'SELECT %s, %s, month, action_type, count(distinct(time_stamp)) FROM USERLOG GROUP BY %s, %s, month, action_type',
+            # ['month', 'action_type', 'day_count'],
+            # {},
+            # __insert_day_data,
+            # './inter/v3/count/%s/%s_%s_monthly_%s.csv'
+        # )
+    ]
     conn = sqlite3.connect('./inter/features.db')
 
-    for pair in pairs:
-        for ct, sqlfmt, cf, dt, handler in count_type:
+    for pair in PAIRs:
+        for ct, sqlfmt, cf, dt, handler, targetfmt in count_type:
             print "\nStart handle %s-%s pair's %s count" % (pair[0], pair[1], ct)
             features = list(pair)
             features.extend(cf)
@@ -186,6 +196,86 @@ def pair_count():
             __sql(conn, sqlfmt % (pair[0], pair[1], pair[0], pair[1]), p,
                     CHUNKSIZE, handler, features, dt)
             print "Totally completed with %s_%s pair" % pair
+
+    conn.close()
+
+# Product diversity
+def product_diversity():
+    """
+    The number of unique items, brands and categories that user, merchant or user-merchant pair 
+    clicked, added to favourites or purchased monthly or overall.
+    """
+    print "Product diversity"
+    keys = [
+        ('user_id', 'item_id'),
+        ('user_id', 'cat_id'),
+        ('user_id', 'brand_id'),
+        ('merchant_id', 'item_id'),
+        ('merchant_id', 'cat_id'),
+        ('merchant_id', 'brand_id'),
+        ('user_id', 'merchant_id', 'item_id'),
+        ('user_id', 'merchant_id', 'cat_id'),
+        ('user_id', 'merchant_id', 'brand_id')
+    ]
+    _2p_sql = 'SELECT %s, %s, sum(action_0), sum(action_2), sum(action_3) FROM USERLOG GROUP BY %s, %s'
+    _3p_sql = 'SELECT %s, %s, %s, sum(action_0), sum(action_2), sum(action_3) FROM USERLOG GROUP BY %s, %s, %s'
+    _common_features = ['action_0', 'action_2', 'action_3']
+    _dtype = {'action_0': np.int32, 'action_2': np.int32, 'action_3': np.int32}
+    _2p_path = './inter/v3/count/product/%s_%s_product.csv'
+    _3p_path = './inter/v3/count/product/%s_%s_%s_product.csv'
+    params = [(
+        key,
+        _2p_sql % (key+key) if len(key) == 2 else _3p_sql % (key+key),
+        _common_features,
+        _dtype,
+        _2p_path % key if len(key) == 2 else _3p_path % key,
+        __insert_day_data
+    ) for key in keys]
+    conn = sqlite3.connect('./inter/features.db')
+
+    for k, sql, fe, dt, p, handler in params:
+        features = list(k)
+        features.extend(fe)
+        pd.DataFrame(columns=features).to_csv(p, index=False)
+        __sql(conn, sql, p, CHUNKSIZE, handler, features, dt)
+        print "Totally completed with %s" % str(k)
+
+    conn.close()
+
+# Penetration features
+def penetration():
+    """
+    The number of users who have purchased an item, merchant, brand or category in a given time interval.
+    Shows the customer base of each item, brand, category and merchant.
+    """
+    print "Penetration features"
+    keys = [
+        'item_id',
+        'cat_id',
+        'brand_id',
+        'merchant_id'
+    ]
+    _sql = "SELECT %s, month, count(user_id), count(distinct(user_id)) FROM USERLOG WHERE action_type=2 GROUP BY %s, month"
+    _common_features = ['month', 'user_num', 'distinct_user_num']
+    _dtype = {'month': np.int32, 'user_num': np.int32, 'distinct_user_num': np.int32}
+    _path = './inter/v3/count/penetration/%s_monthly_penetration.csv'
+    conn = sqlite3.connect('./inter/features.db')
+
+    for k, sql, fe, dt, p, handler in [(
+                key,
+                _sql % (key, key),
+                _common_features,
+                _dtype,
+                _path % key,
+                __insert_day_data
+            ) for key in keys]:
+        features = [k]
+        features.extend(fe)
+        pd.DataFrame(columns=features).to_csv(p, index=False)
+        __sql(conn, sql, p, CHUNKSIZE, handler, features, dt)
+        print "Totally completed with %s" % str(k)
+
+    conn.close()
 
 def basic_data_transform():
     """
@@ -239,7 +329,9 @@ def main():
     # basic_data_transform()
     # action_count(False)
     # map(day_count, [True, False])
-    pair_count()
+    # pair_count()
+    # product_diversity()
+    penetration()
 
 if __name__ == '__main__':
     main()
